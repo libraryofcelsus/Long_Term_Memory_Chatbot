@@ -1,0 +1,1 @@
+These prompts are only used if the Character Card is disabled in the Settings.json
