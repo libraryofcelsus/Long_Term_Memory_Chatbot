@@ -1,4 +1,4 @@
-# Agentic RAG
+# Long Term Memory Chatbot
 Version 0.01 of Long Term Memory Chatbot by [LibraryofCelsus.com](https://www.libraryofcelsus.com)  
   
 [Installation Guide](#installation-guide)  
