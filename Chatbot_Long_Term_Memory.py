@@ -50,11 +50,7 @@ def timestamp_to_datetime(unix_time):
     datetime_str = datetime_obj.strftime("%A, %B %d, %Y at %I:%M%p %Z")
     return datetime_str
       
-def import_api_function():
-    settings_path = './Settings.json'
-    with open(settings_path, 'r') as file:
-        settings = json.load(file)
-    api_module_name = settings['API']
+def import_api_function(api_module_name):
     module_path = f'./Resources/API_Calls/{api_module_name}.py'
     spec = importlib.util.spec_from_file_location(api_module_name, module_path)
     api_module = importlib.util.module_from_spec(spec)
@@ -314,10 +310,17 @@ class MainConversation:
         self.user_id = user_id
         self.API = settings.get('API', 'Oobabooga')
         self.backend_model = settings.get('Model_Backend', 'Llama_2_Chat')
+        self.Enable_Secondary_API = settings.get('Enable_Secondary_API', 'False')
+        self.Secondary_API = settings.get('Secondary_API', 'Oobabooga')
+        self.Secondary_Model = settings.get('Secondary_Model', 'Llama_3')
+        self.Memory_Output = settings.get('Memory_Output', 'False')
         self.format_config = self.initialize_format()
         Use_Char_Card = settings.get('Use_Character_Card', 'False')
         Char_File_Name = settings.get('Character_Card_File_Name', 'Aetherius')
-        self.LLM_API_Call, self.Agent_LLM_API_Call, self.Input_Expansion_API_Call, self.Domain_Selection_API_Call, self.DB_Prune_API_Call, self.Inner_Monologue_API_Call, self.Intuition_API_Call, self.Final_Response_API_Call, self.Short_Term_Memory_API_Call = import_api_function()
+        if self.Enable_Secondary_API == "True":
+            self.LLM_API_Call, self.Agent_LLM_API_Call, self.Input_Expansion_API_Call, self.Domain_Selection_API_Call, self.DB_Prune_API_Call, self.Inner_Monologue_API_Call, self.Intuition_API_Call, self.Final_Response_API_Call, self.Short_Term_Memory_API_Call = import_api_function(self.Secondary_API)
+        else:
+            self.LLM_API_Call, self.Agent_LLM_API_Call, self.Input_Expansion_API_Call, self.Domain_Selection_API_Call, self.DB_Prune_API_Call, self.Inner_Monologue_API_Call, self.Intuition_API_Call, self.Final_Response_API_Call, self.Short_Term_Memory_API_Call = import_api_function(self.API)
         self.max_entries = int(max_entries)
         if Use_Char_Card == "True":
             json_objects = find_base64_encoded_json(f'Characters/{Char_File_Name}.png')
@@ -383,10 +386,14 @@ class MainConversation:
             summary = await self.conversation_summarizer(oldest_seven_entries)
 
             entries_to_remove = self.running_conversation[:5]
-            loop = asyncio.get_event_loop()
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                loop.run_in_executor(executor, lambda: asyncio.run(self.transitional_memory_generation(entries_to_remove)))
+            if self.Memory_Output == "True":
+                loop = asyncio.get_event_loop()
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    loop.run_in_executor(executor, lambda: asyncio.run(self.transitional_memory_generation(entries_to_remove)))   
+            else:
+                asyncio.create_task(self.transitional_memory_generation(entries_to_remove))
 
+            # Continue the conversation while the memory generation happens in the background
             self.running_conversation = self.running_conversation[5:]
             self.summary_entries.append(summary)
             self.save_to_file()
@@ -394,6 +401,7 @@ class MainConversation:
         except Exception as e:
             print("\n_________ERROR DURING OVERFLOW HANDLING________\n")
             traceback.print_exc()
+
 
 
 
@@ -405,11 +413,18 @@ class MainConversation:
             summarization.append({'role': 'assistant', 'content': "Please provide the entries. I will summarize the first 5 into a paragraph."})
             summarization.append({'role': 'user', 'content': f"<Start Input Response Pairs>\nINPUT-RESPONSE PAIRS: {entries}</End Input Response Pairs>"})
             summarization.append({'role': 'assistant', 'content': "Here is a summary of the first five input-response pairs: <Start Summary>"})
-            if self.API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
-                generated_summary = await self.Short_Term_Memory_API_Call(self.API, self.backend_model, summarization, self.user_id, self.bot_name)
-            elif self.API == "AetherNode":
-                prompt = ''.join([message_dict['content'] for message_dict in summarization])
-                generated_summary = await self.Short_Term_Memory_API_Call(self.API, prompt, self.user_id, self.bot_name)
+            if self.Enable_Secondary_API == "True":
+                if self.Secondary_API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
+                    generated_summary = await self.Short_Term_Memory_API_Call(self.Secondary_API, self.Secondary_Model, summarization, self.user_id, self.bot_name)
+                elif self.Secondary_API == "AetherNode":
+                    prompt = ''.join([message_dict['content'] for message_dict in summarization])
+                    generated_summary = await self.Short_Term_Memory_API_Call(self.Secondary_API, prompt, self.user_id, self.bot_name)
+            else:
+                if self.API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
+                    generated_summary = await self.Short_Term_Memory_API_Call(self.API, self.backend_model, summarization, self.user_id, self.bot_name)
+                elif self.API == "AetherNode":
+                    prompt = ''.join([message_dict['content'] for message_dict in summarization])
+                    generated_summary = await self.Short_Term_Memory_API_Call(self.API, prompt, self.user_id, self.bot_name)
             print(f"GENERATED SUMMARY: {generated_summary}")
             return {'role': 'assistant', 'content': generated_summary}
 
@@ -419,7 +434,7 @@ class MainConversation:
             return {'role': 'assistant', 'content': "Summarization failed."}
 
     async def transitional_memory_generation(self, entries):
-        print("\n\nPlease wait. Generating Memories...\n\n")
+        print("\n\nGenerating Memories...\n\n")
         try:
             memory_type = "Episodic"
             episodic_list = []
@@ -428,13 +443,19 @@ class MainConversation:
             episodic_list.append({'role': 'assistant', 'content': f"Please now generate an autobiographical memory for {self.bot_name} based on the distilled interaction."})
 
             episodic_list.append({'role': 'assistant', 'content': f"{self.botnameupper}'S THIRD-PERSON AUTOBIOGRAPHICAL MEMORY: <Start Episodic Memory>"})
-
             
-            if self.API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
-                generated_episodic_memory = await self.Short_Term_Memory_API_Call(self.API, self.backend_model, episodic_list, self.user_id, self.bot_name)
-            elif self.API == "AetherNode":
-                prompt = ''.join([message_dict['content'] for message_dict in episodic_list])
-                generated_episodic_memory = await self.Short_Term_Memory_API_Call(self.API, prompt, self.user_id, self.bot_name)
+            if self.Enable_Secondary_API == "True":
+                if self.Secondary_API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
+                    generated_episodic_memory = await self.Short_Term_Memory_API_Call(self.Secondary_API, self.backend_model, episodic_list, self.user_id, self.bot_name)
+                elif self.Secondary_API == "AetherNode":
+                    prompt = ''.join([message_dict['content'] for message_dict in episodic_list])
+                    generated_episodic_memory = await self.Short_Term_Memory_API_Call(self.Secondary_API, prompt, self.user_id, self.bot_name)
+            else:
+                if self.API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
+                    generated_episodic_memory = await self.Short_Term_Memory_API_Call(self.API, self.backend_model, episodic_list, self.user_id, self.bot_name)
+                elif self.API == "AetherNode":
+                    prompt = ''.join([message_dict['content'] for message_dict in episodic_list])
+                    generated_episodic_memory = await self.Short_Term_Memory_API_Call(self.API, prompt, self.user_id, self.bot_name)
             if Memory_Output == "True":
                 print(f"\nGENERATED EPISODIC MEMORY: {generated_episodic_memory}")
             
@@ -453,11 +474,19 @@ class MainConversation:
             semantic_list.append({'role': 'user', 'content': f"CONVERSATION INPUT: {entries}\n\nExtract and list the factual knowledge mentioned, ensuring each bullet point is a fully independent, standalone statement with a clear topic. Make sure each bullet point includes all the necessary context to be understood on its own. If no factual information is available, respond only with: 'No Memories'."})
             semantic_list.append({'role': 'assistant', 'content': "EXTRACTED SEMANTIC MEMORY: "})
 
-            if self.API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
-                generated_semantic_memory = await self.Short_Term_Memory_API_Call(self.API, self.backend_model, semantic_list, self.user_id, self.bot_name)
-            elif self.API == "AetherNode":
-                prompt = ''.join([message_dict['content'] for message_dict in semantic_list])
-                generated_semantic_memory = await self.Short_Term_Memory_API_Call(self.API, prompt, self.user_id, self.bot_name)
+
+            if self.Enable_Secondary_API == "True":
+                if self.Secondary_API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
+                    generated_semantic_memory = await self.Short_Term_Memory_API_Call(self.Secondary_API, self.backend_model, semantic_list, self.user_id, self.bot_name)
+                elif self.Secondary_API == "AetherNode":
+                    prompt = ''.join([message_dict['content'] for message_dict in semantic_list])
+                    generated_semantic_memory = await self.Short_Term_Memory_API_Call(self.Secondary_API, prompt, self.user_id, self.bot_name)
+            else:
+                if self.API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
+                    generated_semantic_memory = await self.Short_Term_Memory_API_Call(self.API, self.backend_model, semantic_list, self.user_id, self.bot_name)
+                elif self.API == "AetherNode":
+                    prompt = ''.join([message_dict['content'] for message_dict in semantic_list])
+                    generated_semantic_memory = await self.Short_Term_Memory_API_Call(self.API, prompt, self.user_id, self.bot_name)
             if "No Memories" not in generated_semantic_memory:
                 segments = re.split(r'(?:•|-|\n.*[•-])', generated_semantic_memory)
                 if Memory_Output == "True":
@@ -485,11 +514,19 @@ class MainConversation:
 
                         # <task> Improve module by feeding previously added domains to avoid bloat
                         domain_extraction.append({'role': 'user', 'content': f"Analyze the following text and provide the single most relevant, generalized knowledge domain:\n{segment}"})
-                        if self.API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
-                            domain = await self.Short_Term_Memory_API_Call(self.API, self.backend_model, domain_extraction, self.user_id, self.bot_name)
-                        elif self.API == "AetherNode":
-                            prompt = ''.join([message_dict['content'] for message_dict in domain_extraction])
-                            domain = await self.Short_Term_Memory_API_Call(self.API, prompt, self.user_id, self.bot_name)
+                        
+                        if self.Enable_Secondary_API == "True":
+                            if self.Secondary_API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
+                                domain = await self.Short_Term_Memory_API_Call(self.Secondary_API, self.backend_model, domain_extraction, self.user_id, self.bot_name)
+                            elif self.Secondary_API == "AetherNode":
+                                prompt = ''.join([message_dict['content'] for message_dict in domain_extraction])
+                                domain = await self.Short_Term_Memory_API_Call(self.Secondary_API, prompt, self.user_id, self.bot_name)
+                        else:
+                            if self.API in ["OpenAi", "Oobabooga", "KoboldCpp"]:
+                                domain = await self.Short_Term_Memory_API_Call(self.API, self.backend_model, domain_extraction, self.user_id, self.bot_name)
+                            elif self.API == "AetherNode":
+                                prompt = ''.join([message_dict['content'] for message_dict in domain_extraction])
+                                domain = await self.Short_Term_Memory_API_Call(self.API, prompt, self.user_id, self.bot_name)
                         domain = domain.strip()
                         if Memory_Output == "True":
                             print(f"[-DOMAIN: {domain}\nMEMORY: {segment}]")
@@ -569,7 +606,10 @@ async def NPC_Chatbot(user_input, username, user_id, bot_name, main_conversation
     Dataset_Upload_Type = settings.get('Dataset_Upload_Type', 'Simple')
     Dataset_Format = settings.get('Dataset_Format', 'Llama_3')
     vector_db = settings.get('Vector_DB', 'Qdrant_DB')
-    LLM_API_Call, Agent_LLM_API_Call, Input_Expansion_API_Call, Domain_Selection_API_Call, DB_Prune_API_Call, Inner_Monologue_API_Call, Intuition_API_Call, Final_Response_API_Call, Short_Term_Memory_API_Call = import_api_function()
+    Enable_Secondary_API = settings.get('Enable_Secondary_API', 'False')
+    Secondary_API = settings.get('Secondary_API', 'Oobabooga')
+    Secondary_Model = settings.get('Secondary_Model', 'Llama_3')
+    LLM_API_Call, Agent_LLM_API_Call, Input_Expansion_API_Call, Domain_Selection_API_Call, DB_Prune_API_Call, Inner_Monologue_API_Call, Intuition_API_Call, Final_Response_API_Call, Short_Term_Memory_API_Call = import_api_function(API)
     heuristic_input_start, heuristic_input_end, system_input_start, system_input_end, user_input_start, user_input_end, assistant_input_start, assistant_input_end = set_format_variables(backend_model)
     end_prompt = ""
     Use_Char_Card = settings.get('Use_Character_Card', 'False')
@@ -1180,6 +1220,14 @@ async def NPC_Chatbot(user_input, username, user_id, bot_name, main_conversation
 
 init(autoreset=True)
 
+
+async def async_input(prompt: str):
+    """Handles asynchronous non-blocking user input."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, input, prompt)
+    
+    
+
 async def main():
     print("\n")
     print(f"If you found this example useful, please give it a star on github :)")
@@ -1192,6 +1240,7 @@ async def main():
     Use_Char_Card = settings.get('Use_Character_Card', 'False')
     Char_File_Name = settings.get('Character_Card_File_Name', 'Aetherius')
     conv_length = settings.get('Conversation_Length', '15')
+    Memory_Output = settings.get('Memory_Output', 'False')
     base_path = "./Chatbot_Prompts"
     base_prompts_path = os.path.join(base_path, "Base")
     user_bot_path = os.path.join(base_path, user_id, bot_name)  
@@ -1228,7 +1277,10 @@ async def main():
         print(con_history)
         if len(conversation_history) < 1:
             print(f"{Fore.LIGHTBLUE_EX}{bot_name}: {colorize_text(greeting_msg)}\n")
-        user_input = input(f"\n\n{Fore.LIGHTBLUE_EX}{username}:{Style.RESET_ALL} ")
+        if Memory_Output == "True":
+            user_input = input(f"\n\n{Fore.LIGHTBLUE_EX}{username}:{Style.RESET_ALL} ")
+        else:
+            user_input = await async_input(f"\n\n{Fore.LIGHTBLUE_EX}{username}:{Style.RESET_ALL} ")
         if user_input.lower() == 'exit':
             break
         timestamp = timestamp_func()

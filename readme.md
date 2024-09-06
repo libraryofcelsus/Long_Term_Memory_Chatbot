@@ -8,6 +8,8 @@ Version 0.01 of Long Term Memory Chatbot by [LibraryofCelsus.com](https://www.li
 ------
 **Recent Changes**
 
+• 09/06 Added Split API usage, allowing for background summary and memory loops to be ran locally to reduce OpenAi calls.
+
 • 09/05 First Release
 
 ------
@@ -56,9 +58,8 @@ Made by: https://github.com/libraryofcelsus
 
 
 ------
-# Future Plans: 
-• Improve Internal Prompts 
-• Add Split API usage, allowing for background loops to be run locally while main loops use OpenAi.   
+# Future Plans:  
+• Improve Internal Prompts   
 • Add Global Events    
 • Add Local Events  
 • Add Individual Events  
@@ -112,8 +113,9 @@ https://github.com/oobabooga/text-generation-webui
 
 **9.** Launch a script with **run_Chatbot_NPC*.bat**    
 
-**10.** Start chatting!  
-
+**10.** Start chatting!   After you receive a response, entering 'Y' will write it to a dataset json.  Pressing 'N' will write the response to the conversation history. Pressing 'D' will delete the response for regeneration.  
+  
+To have the memory loops run in the background so you can start chatting immediately, set the "Memory_Output" key in the ./Settings.json to "False".  To show all of the internal loops, set "Debug_Output" to "True".  
 
 
 
